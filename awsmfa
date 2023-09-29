@@ -1,0 +1,169 @@
+#!/bin/bash
+
+helptext () {
+  echo "awsmfa - A helper tool to manage MFA for AWS CLI"
+  echo ""
+  echo "usage: awsmfa configure [--profile profile-name] [-v]"
+  echo "usage: awsmfa [TOTP MFA CODE] [--profile profile-name] [-v]"
+  echo ""
+  echo "Options:"
+  echo "   -v, --verbose        Include verbose output"
+  echo "   --profile            AWS profile to use (default is 'default' or value of \$AWS_PROFILE)"
+  echo "   -h, --help           Print this help message and exit"
+}
+
+
+##
+# Set default variables
+##
+
+VERBOSE=false
+PROFILE=${AWS_PROFILE:-default}
+####
+
+
+##
+# Arg Parsing
+##
+
+POSITIONAL_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --profile)
+      PROFILE="$2"
+      shift # past argument
+      shift # past value
+      ;;
+    -v|--verbose)
+      VERBOSE=true
+      shift # past argument
+      ;;
+    -h|--help)
+      helptext
+      exit 0
+      ;;
+    -*|--*)
+      echo "Unknown option $1"
+      exit 1
+      ;;
+    *)
+      POSITIONAL_ARGS+=("$1") # save positional arg
+      shift # past argument
+      ;;
+  esac
+done
+
+if $VERBOSE; then
+  echo "[INFO] Using Profile: $PROFILE"
+fi
+
+set -- "${POSITIONAL_ARGS[@]}" # restore positional parameters
+####
+
+
+##
+# Check mandatory prerequisites are installed
+##
+
+AWS_CLI=`which aws`
+
+if [ $? -ne 0 ]; then
+  echo "[ERROR] AWS CLI is not installed; exiting"
+  exit 1
+else
+  if $VERBOSE; then
+    echo "[INFO] Using AWS CLI found at $AWS_CLI"
+  fi
+fi
+
+JQ_CLI=`which jq`
+
+if [ $? -ne 0 ]; then
+  echo "[ERROR] jq is not installed; exiting"
+  exit 1
+else
+  if $VERBOSE; then
+    echo "[INFO] Using jq found at $JQ_CLI"
+  fi
+fi
+####
+
+
+##
+# If configuring profiles
+##
+
+if [[ $1 == "configure" ]]; then
+  aws configure --profile $PROFILE-cli # Configure access key and secret for the backend profile
+  REGION=`aws configure --profile $PROFILE-cli get region 2>/dev/null`
+  OUTPUT_FORMAT=`aws configure --profile $PROFILE-cli get output 2>/dev/null`
+  if [ ! -z ${REGION} ] ; then # Replicate region to main profile if set for backend profile
+    aws configure --profile $PROFILE set region $REGION
+  fi
+  if [ ! -z ${OUTPUT_FORMAT} ] ; then # Replicate output format to main profile if set for backend profile
+    aws configure --profile $PROFILE set output $OUTPUT_FORMAT
+  fi
+  read -p "MFA Serial [$(aws configure --profile $PROFILE get mfa_serial 2>/dev/null)]: " MFA_SERIAL
+  if [ ! -z ${MFA_SERIAL} ] ; then
+    aws configure --profile $PROFILE set mfa_serial $MFA_SERIAL
+  fi
+  read -p "Bitwarden Item ID [$(aws configure --profile $PROFILE get bitwarden_item_id 2>/dev/null)]: " BITWARDEN_ITEM_ID
+  if [ ! -z ${BITWARDEN_ITEM_ID} ] ; then
+    aws configure --profile $PROFILE set bitwarden_item_id $BITWARDEN_ITEM_ID
+  fi
+  exit 0
+fi
+####
+
+##
+# If authenticating
+##
+
+BITWARDEN_ITEM_ID=`aws configure --profile $PROFILE get bitwarden_item_id`
+
+if [[ $# -eq 0 ]]; then
+  if [ ! -z ${BITWARDEN_ITEM_ID} ]; then
+    BW_CLI=`which bw`
+
+    if [ $? -ne 0 ]; then
+      echo "Bitwarden CLI is not installed; exiting"
+      exit 1
+    else
+      if $VERBOSE; then
+        echo "[INFO] Using Bitwarden CLI found at $BW_CLI"
+      fi
+    fi
+
+    MFA_TOKEN_CODE=`bw get totp $BITWARDEN_ITEM_ID`
+  else
+    echo "[ERROR] Bitwarden not configured and no MFA code provided"
+    helptext
+    exit 2
+  fi
+elif [[ $# -eq 1 ]]; then
+  MFA_TOKEN_CODE=$1
+else
+  echo "[ERROR] Too many arguments provided"
+  helptext
+  exit 2
+fi
+
+ARN_OF_MFA=$(aws configure --profile $PROFILE get mfa_serial)
+
+if $VERBOSE; then
+  echo "[INFO] AWS-CLI Profile: $PROFILE"
+  echo "[INFO] MFA ARN: $ARN_OF_MFA"
+  echo "[INFO] MFA Token Code: $MFA_TOKEN_CODE"
+fi
+
+if $VERBOSE; then
+  echo "[INFO] Running 'aws --profile $PROFILE-cli sts get-session-token --duration 129600 --serial-number $ARN_OF_MFA --token-code $MFA_TOKEN_CODE --output json'"
+fi
+
+OUTPUT=$(aws --profile $PROFILE-cli sts get-session-token --duration 129600 \
+  --serial-number $ARN_OF_MFA --token-code $MFA_TOKEN_CODE --output json)
+
+aws --profile $PROFILE configure set aws_access_key_id $(jq -n "$OUTPUT" | jq .Credentials.AccessKeyId -r)
+aws --profile $PROFILE configure set aws_secret_access_key $(jq -n "$OUTPUT" | jq .Credentials.SecretAccessKey -r)
+aws --profile $PROFILE configure set aws_session_token $(jq -n "$OUTPUT" | jq .Credentials.SessionToken -r)
