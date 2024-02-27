@@ -76,17 +76,6 @@ else
     echo "[INFO] Using AWS CLI found at $AWS_CLI"
   fi
 fi
-
-JQ_CLI=`which jq`
-
-if [ $? -ne 0 ]; then
-  echo "[ERROR] jq is not installed; exiting"
-  exit 1
-else
-  if $VERBOSE; then
-    echo "[INFO] Using jq found at $JQ_CLI"
-  fi
-fi
 ####
 
 
@@ -158,12 +147,12 @@ if $VERBOSE; then
 fi
 
 if $VERBOSE; then
-  echo "[INFO] Running 'aws --profile $PROFILE-cli sts get-session-token --duration 129600 --serial-number $ARN_OF_MFA --token-code $MFA_TOKEN_CODE --output json'"
+  echo "[INFO] Running 'aws --profile $PROFILE-cli sts get-session-token --duration 129600 --serial-number $ARN_OF_MFA --token-code $MFA_TOKEN_CODE'"
 fi
 
-OUTPUT=$(aws --profile $PROFILE-cli sts get-session-token --duration 129600 \
-  --serial-number $ARN_OF_MFA --token-code $MFA_TOKEN_CODE --output json)
+read ID EXPIRY SECRET TOKEN < <(echo $(aws --profile $PROFILE-cli sts get-session-token --duration 129600 \
+  --serial-number $ARN_OF_MFA --token-code $MFA_TOKEN_CODE --output text --query "Credentials"))
 
-aws --profile $PROFILE configure set aws_access_key_id $(jq -n "$OUTPUT" | jq .Credentials.AccessKeyId -r)
-aws --profile $PROFILE configure set aws_secret_access_key $(jq -n "$OUTPUT" | jq .Credentials.SecretAccessKey -r)
-aws --profile $PROFILE configure set aws_session_token $(jq -n "$OUTPUT" | jq .Credentials.SessionToken -r)
+aws --profile $PROFILE configure set aws_access_key_id $ID
+aws --profile $PROFILE configure set aws_secret_access_key $SECRET
+aws --profile $PROFILE configure set aws_session_token $TOKEN

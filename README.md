@@ -4,7 +4,6 @@ A helper tool to manage MFA for AWS CLI
 ## Prerequisites
 
  - AWS CLI
- - jq
  - (Optional) Bitwarden CLI
 
 ## Installation
