@@ -93,6 +93,8 @@ if [[ $1 == "configure" ]]; then
   if [ ! -z ${OUTPUT_FORMAT} ] ; then # Replicate output format to main profile if set for backend profile
     aws configure --profile $PROFILE set output $OUTPUT_FORMAT
   fi
+  echo "Available MFA Devices: "
+  echo $(aws --profile $PROFILE-cli iam list-mfa-devices --output text --query "MFADevices[].SerialNumber")
   read -p "MFA Serial [$(aws configure --profile $PROFILE get mfa_serial 2>/dev/null)]: " MFA_SERIAL
   if [ ! -z ${MFA_SERIAL} ] ; then
     aws configure --profile $PROFILE set mfa_serial $MFA_SERIAL
